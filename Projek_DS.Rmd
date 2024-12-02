@@ -1,0 +1,194 @@
+---
+title: "Proyek Akhir Data Science"
+author: "PanjiArif - 123220091"
+date: "2024-12-01"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## library dan import
+```{r}
+library(dslabs)
+library(scales)
+library(tidyverse)
+```
+
+## Data Gathering
+```{r}
+pdrb_dataset = read.csv("Produk Domestik Regional Bruto per Kapita Atas Dasar Harga Berlaku Menurut Provinsi (ribu rupiah), 202.csv")
+
+str(pdrb_dataset)
+```
+```{r}
+upah_dataset = read.csv("Rata-rata Upah_Gaji Bersih Sebulan Buruh_Karyawan_Pegawai Menurut Provinsi dan Jenis Pekerjaan Utama.csv")
+
+str(upah_dataset)
+```
+
+
+## Data Pre-Processing
+# a. data set PDRB
+```{r}
+pdrb_clean <- pdrb_dataset%>%
+  #mengganti nama kolom yang terlalu panjang
+  rename(PDRB = Produk.Domestik.Regional.Bruto.per.Kapita.HB..Rp.)%>%
+  #menghapus data dengan nilai NA
+  filter(!is.na(Provinsi) & !is.na(PDRB))%>%
+  #menghapus baris dengan provinsi tertentu karena tidak ada pada data set satunya
+  filter(!Provinsi %in% c("Papua Pegunungan", "Papua Barat Daya", "Papua Tengah", "Papua Selatan"))
+pdrb_clean
+```
+# b. data set Rata-rata Upah
+```{r}
+upah_clean <- upah_dataset %>%
+  #menghapus kolom 2 dan 11 karena tidak terpakai
+  select(-2,-11)%>%
+  #membersihkan baris dengan nilai NA
+  filter(complete.cases(.))%>%
+  #menghapus data rata-rata karena tidak dibutuhkan
+  filter(!Provinsi == "Rata-rata")%>%
+  #mengganti nama kolom supaya mempermudah pekerjaan
+  rename(X1 = X0.1, X7 = X7.8.2009, X8 = X.00)
+upah_clean
+```
+# c. merge data
+```{r}
+# Membersihkan nama kolom jika perlu
+names(pdrb_clean) <- tolower(names(pdrb_clean))
+names(upah_clean) <- tolower(names(upah_clean))
+
+# Pastikan nama provinsi konsisten
+pdrb_clean$provinsi <- trimws(pdrb_clean$provinsi)
+upah_clean$provinsi <- trimws(upah_clean$provinsi)
+
+# Menggabungkan kedua dataset berdasarkan kolom "provinsi"
+merged_data <- merge(pdrb_clean, upah_clean, by = "provinsi", all = FALSE)
+merged_data$rata_rata_upah = round(
+  rowMeans(merged_data[, c("x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8")], na.rm = TRUE)/ 1e6, 1
+  )
+
+# Menampilkan data gabungan
+print(head(merged_data))
+
+# Mengecek dimensi dataset gabungan
+cat("Jumlah baris: ", nrow(merged_data), "\n")
+cat("Jumlah kolom: ", ncol(merged_data), "\n")
+```
+
+
+## Data Visualization
+```{r}
+ggplot(
+  data = merged_data,
+  aes(
+    x = rata_rata_upah,
+    y = provinsi
+  ) 
+) + labs (
+    title = "Histogram distribusi upah dan PDRB",
+    x = "Rata-rata upah (Juta)",
+    y = "Provinsi"
+) + geom_col() + theme_minimal()
+
+ggplot(
+  data = merged_data,
+  aes(
+    x = pdrb,
+    y = provinsi,
+  ) 
+) + labs (
+    title = "Histogram distribusi upah dan PDRB",
+    x = "PDRB",
+    y = "Provinsi"
+) + geom_col() + scale_x_continuous(labels = comma) + theme_minimal()
+```
+```{r}
+ggplot(
+  data = merged_data,
+  aes(
+    x = pdrb,
+    y = rata_rata_upah
+  )
+) + labs(
+  title = "Grafik Hubungan antara PDRB dengan Rata-rata upah",
+  x = "PDRB",
+  y = "Rata-rata Upah (Juta)"
+) + geom_point() + scale_x_continuous(labels = comma)
+```
+
+## Menangani Outlier
+```{r}
+# Fungsi untuk mendeteksi dan menghapus outlier menggunakan metode IQR
+remove_outliers <- function(data, column) {
+  Q1 <- quantile(data[[column]], 0.25, na.rm = TRUE) # Kuartil pertama
+  Q3 <- quantile(data[[column]], 0.75, na.rm = TRUE) # Kuartil ketiga
+  IQR <- Q3 - Q1 # Rentang antar-kuartil
+
+  # Batas bawah dan atas
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+
+  # Menyaring data yang berada dalam batas
+  data_clean <- data %>%
+    filter(data[[column]] >= lower_bound & data[[column]] <= upper_bound)
+
+  return(data_clean)
+}
+
+cleaned_data <- remove_outliers(merged_data, "rata_rata_upah")
+cleaned_data <- remove_outliers(cleaned_data, "pdrb")
+
+# Memeriksa hasil
+summary(cleaned_data)
+
+```
+
+## Visualisasi setelah dibersihkan Outlier
+```{r}
+ggplot(
+  data = cleaned_data,
+  aes(
+    x = pdrb,
+    y = rata_rata_upah
+  )
+) + labs(
+  title = "Grafik Hubungan antara PDRB dengan Rata-rata upah",
+  x = "PDRB",
+  y = "Rata-rata Upah (Juta)"
+) + geom_point() + scale_x_continuous(labels = comma)
+```
+
+## Model Regression Linier
+```{r}
+# Membaca dataset gabungan
+data <- cleaned_data
+
+# Membuat model untuk rata rata setiap pekerjaan
+model <- lm(rata_rata_upah ~ pdrb, data = data)  
+summary(model)
+
+# Prediksi
+predictions <- predict(model, data)
+data$prediksi_upah <- predictions
+
+# Evaluasi model
+library(Metrics)
+mae <- mae(data$rata_rata_upah, predictions)
+rmse <- rmse(data$rata_rata_upah, predictions)
+cat("MAE:", mae, "\nRMSE:", rmse, "\n")
+
+```
+```{r}
+ggplot(
+  data = data,
+  aes(x = prediksi_upah, y = rata_rata_upah)
+) +
+  geom_point(color = "darkblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Prediksi vs Kenyataan", x = "Prediksi Upah", y = "Rata-rata Upah") +
+  theme_minimal()
+```
+
